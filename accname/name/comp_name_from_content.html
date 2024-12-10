@@ -259,17 +259,8 @@
 <h1 data-expectedlabel="Call Us" data-testname="heading name from content with text-transform:capitalize" class="ex" style="text-transform:capitalize;">Call us</h1>
 <h1 data-expectedlabel="call us" data-testname="heading name from content with text-transform:lowercase" class="ex" style="text-transform:lowercase;">Call us</h1>
 
-<!-- Giacomo Petri first test, be patient if there is any mistake :D -->
-<h1>Name from content containing element with implicit term role</h1>
-<p>This test aims to verify the computed acc name of elements (buttons, headings, links) containing a term role.</p>
-<p>This test covers:</p>
-<ul>
-  <li>Elements with implicit button, heading, link roles containing element with implicit term role</li>
-  <li>Elements with implicit button, heading, link roles containing element with explicit term role</li>
-  <li>Elements with explicit button, heading, link roles containing element with implicit term role</li>
-  <li>Elements with explicit button, heading, link roles containing element with explicit term role</li>
-</ul>
-<p>Tests the <a href="https://www.w3.org/TR/accname-1.2/#comp_name_from_content">Computation steps</a> (specifically point F) from the Accessible Name and Description Computation 1.2 specifications for that specific instance.</p> 
+<!-- Tests `Name from Each Child` edge case failures with an embedded `term` as a child element role. -->
+<!-- https://w3c.github.io/accname/#comp_name_from_content_for_each_child -->
 
 <h2>Elements with implicit button, heading, link roles containing element with implicit term role</h2>
 <button data-expectedlabel="this is an example" data-testname="implicit button name from content containing a dfn element" class="ex iblock"><span>this is an </span><dfn>example</dfn></button>
