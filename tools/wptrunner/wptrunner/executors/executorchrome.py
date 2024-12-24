@@ -10,13 +10,16 @@ from typing import Mapping, MutableMapping
 
 from webdriver import error
 
+from .base import strip_server
 from .executorwebdriver import (
     WebDriverBaseProtocolPart,
     WebDriverCrashtestExecutor,
     WebDriverFedCMProtocolPart,
     WebDriverPrintRefTestExecutor,
     WebDriverProtocol,
+    WebDriverBidiProtocol,
     WebDriverRefTestExecutor,
+    WebDriverTestDriverProtocolPart,
     WebDriverTestharnessExecutor,
     WebDriverTestharnessProtocolPart,
 )
@@ -94,6 +97,37 @@ class ChromeDriverLeakProtocolPart(LeakProtocolPart):
         return counters
 
 
+class ChromeDriverTestDriverProtocolPart(WebDriverTestDriverProtocolPart):
+    """An interface to the browser-side testdriver infrastructure that lazily settles calls."""
+
+    def setup(self):
+        super().setup()
+        self._pending_message = ""
+
+    def send_message(self, cmd_id, message_type, status, message=None):
+        message_script = self._format_send_message_script(cmd_id, message_type, status, message)
+        if message_type == "complete":
+            assert not self._pending_message, self._pending_message
+            self._pending_message = message_script
+        else:
+            self.webdriver.execute_script(message_script)
+
+    def _get_next_message_classic(self, url, script_resume):
+        try:
+            message_script, self._pending_message = self._pending_message, ""
+            return self.parent.base.execute_script(message_script + script_resume,
+                                                   asynchronous=True,
+                                                   args=[strip_server(url)])
+        except error.JavascriptErrorException as js_error:
+            # TODO(crbug.com/340662810): Cycle testdriver event loop to work
+            # around `testharnessreport.js` flakily not loaded.
+            if re.search(r'window\.__wptrunner_process_next_event is not a function',
+                         js_error.message):
+                time.sleep(0.05)
+                return None
+            raise
+
+
 class ChromeDriverTestharnessProtocolPart(WebDriverTestharnessProtocolPart):
     """Implementation of `testharness.js` tests controlled by ChromeDriver.
 
@@ -156,6 +190,7 @@ class ChromeDriverProtocol(WebDriverProtocol):
         ChromeDriverBaseProtocolPart,
         ChromeDriverDevToolsProtocolPart,
         ChromeDriverFedCMProtocolPart,
+        ChromeDriverTestDriverProtocolPart,
         ChromeDriverTestharnessProtocolPart,
     ]
     for base_part in WebDriverProtocol.implements:
@@ -167,6 +202,27 @@ class ChromeDriverProtocol(WebDriverProtocol):
 
     def __init__(self, executor, browser, capabilities, **kwargs):
         self.implements = list(ChromeDriverProtocol.implements)
+        if getattr(browser, "leak_check", False):
+            self.implements.append(ChromeDriverLeakProtocolPart)
+        super().__init__(executor, browser, capabilities, **kwargs)
+
+
+class ChromeDriverBidiProtocol(WebDriverBidiProtocol):
+    implements = [
+        ChromeDriverBaseProtocolPart,
+        ChromeDriverDevToolsProtocolPart,
+        ChromeDriverFedCMProtocolPart,
+        ChromeDriverTestharnessProtocolPart,
+    ]
+    for base_part in WebDriverBidiProtocol.implements:
+        if base_part.name not in {part.name for part in implements}:
+            implements.append(base_part)
+
+    # Prefix to apply to vendor-specific WebDriver extension commands.
+    vendor_prefix = "goog"
+
+    def __init__(self, executor, browser, capabilities, **kwargs):
+        self.implements = list(ChromeDriverBidiProtocol.implements)
         if getattr(browser, "leak_check", False):
             self.implements.append(ChromeDriverLeakProtocolPart)
         super().__init__(executor, browser, capabilities, **kwargs)
@@ -218,9 +274,15 @@ class ChromeDriverRefTestExecutor(WebDriverRefTestExecutor):
 
 @_evaluate_sanitized_result
 class ChromeDriverTestharnessExecutor(WebDriverTestharnessExecutor):
-    protocol_cls = ChromeDriverProtocol
 
     def __init__(self, *args, sanitizer_enabled=False, reuse_window=False, **kwargs):
+        require_webdriver_bidi = kwargs.get("browser_settings", {}).get(
+            "require_webdriver_bidi", None)
+        if require_webdriver_bidi:
+            self.protocol_cls = ChromeDriverBidiProtocol
+        else:
+            self.protocol_cls = ChromeDriverProtocol
+
         super().__init__(*args, **kwargs)
         self.sanitizer_enabled = sanitizer_enabled
         self.reuse_window = reuse_window
@@ -245,18 +307,6 @@ class ChromeDriverTestharnessExecutor(WebDriverTestharnessExecutor):
         if self.reuse_window:
             self.protocol.testharness.persistent_test_window = test_window
         return test_window
-
-    def _get_next_message_classic(self, protocol, url, test_window):
-        try:
-            return super()._get_next_message_classic(protocol, url, test_window)
-        except error.JavascriptErrorException as js_error:
-            # TODO(crbug.com/340662810): Cycle testdriver event loop to work
-            # around `testharnessreport.js` flakily not loaded.
-            if re.search(r'window\.__wptrunner_process_next_event is not a function',
-                         js_error.message):
-                time.sleep(0.05)
-                return None
-            raise
 
 
 @_evaluate_sanitized_result
